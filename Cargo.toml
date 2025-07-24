@@ -1,0 +1,42 @@
+[package]
+name = "bossy-rust"
+version = "0.1.0"
+edition = "2021"
+description = "A lightweight Terminal User Interface (TUI) process manager for macOS"
+authors = ["Pedro Nieto"]
+license = "MIT"
+
+[[bin]]
+name = "bossy-rust"
+path = "src/main.rs"
+
+[dependencies]
+# TUI Framework
+ratatui = "0.26"
+crossterm = "0.27"
+tui-input = "0.8"
+
+# System Information
+sysinfo = "0.30"
+netstat2 = "0.9"
+pnet = "0.34"
+
+# macOS Integration
+core-foundation = "0.9"
+mach2 = "0.4"
+system-configuration = "0.5"
+
+# Utilities
+clap = { version = "4.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+regex = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockall = "0.12"
+tempfile = "3.0"
+assert_cmd = "2.0"
+predicates = "3.0"

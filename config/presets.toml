@@ -1,0 +1,163 @@
+# BossyRust Configuration Presets
+# Common port and process presets for quick actions
+
+[common_ports]
+# Web Development
+react = 3000
+react_alt = 3001
+create_react_app = 3001
+next_js = 3000
+angular = 4200
+vue = 8080
+flask = 5000
+django = 8000
+express = 3000
+http_alt = 8080
+
+# Databases
+postgresql = 5432
+mysql = 3306
+redis = 6379
+mongodb = 27017
+elasticsearch = 9200
+couchdb = 5984
+
+# Message Queues & Streaming
+rabbitmq = 5672
+kafka = 9092
+mqtt = 1883
+
+# Monitoring & Metrics
+grafana = 3001
+prometheus = 9090
+influxdb = 8086
+
+# Development Tools
+webpack = 8080
+vite = 3000
+parcel = 1234
+browsersync = 3000
+
+[development_processes]
+# Frontend Development
+frontend = [
+    "node",
+    "npm", 
+    "yarn",
+    "webpack",
+    "webpack-dev-server",
+    "vite",
+    "next",
+    "ng",
+    "angular",
+    "vue-cli-service",
+    "react-scripts",
+    "create-react-app",
+    "parcel"
+]
+
+# Backend Development
+backend = [
+    "python",
+    "django",
+    "flask",
+    "gunicorn",
+    "uvicorn",
+    "fastapi",
+    "rails",
+    "ruby",
+    "php",
+    "php-fpm",
+    "artisan"
+]
+
+# Build Tools
+build = [
+    "gradle",
+    "maven",
+    "make",
+    "cmake",
+    "cargo",
+    "go",
+    "dotnet"
+]
+
+# Databases (Local Development)
+databases = [
+    "postgres",
+    "mysqld",
+    "redis-server",
+    "mongod",
+    "elasticsearch"
+]
+
+[quick_actions]
+# Predefined quick actions for the TUI
+
+[quick_actions.kill_dev_servers]
+name = "Kill Development Servers"
+description = "Kill common development servers (React, Angular, etc.)"
+processes = ["node", "npm", "yarn", "webpack-dev-server", "vite", "next"]
+confirmation_required = true
+
+[quick_actions.kill_databases]
+name = "Kill Local Databases"
+description = "Kill local database processes"
+processes = ["postgres", "mysqld", "redis-server", "mongod"]
+confirmation_required = true
+
+[quick_actions.free_dev_ports]
+name = "Free Development Ports"
+description = "Kill processes using common development ports"
+ports = [3000, 3001, 4200, 5000, 8000, 8080]
+confirmation_required = true
+
+[search_patterns]
+# Predefined search patterns for quick filtering
+
+[search_patterns.high_cpu]
+name = "High CPU Usage"
+pattern = ">25%"
+description = "Processes using more than 25% CPU"
+
+[search_patterns.high_memory]
+name = "High Memory Usage" 
+pattern = ">500MB"
+description = "Processes using more than 500MB memory"
+
+[search_patterns.dev_processes]
+name = "Development Processes"
+pattern = "node|python|java|ruby"
+description = "Common development processes"
+
+[search_patterns.system_processes]
+name = "System Processes"
+pattern = "kernel|launchd|System"
+description = "macOS system processes"
+
+[ui_settings]
+# UI customization settings
+refresh_interval_ms = 2000
+max_process_display = 100
+max_port_display = 50
+show_process_tree = true
+highlight_dev_ports = true
+confirm_destructive_actions = true
+
+[ui_settings.colors]
+# Color scheme (these would be used in the TUI)
+primary = "blue"
+secondary = "cyan"
+warning = "yellow"
+error = "red"
+success = "green"
+highlight = "magenta"
+
+[keyboard_shortcuts]
+# Custom keyboard shortcuts (for future implementation)
+quick_kill = "K"
+refresh_all = "R"
+toggle_auto_refresh = "A"
+show_help = "?"
+emergency_cleanup = "E"
+export_data = "X"
