@@ -156,14 +156,14 @@ impl CliHandler {
         println!("├──────────┼─────────────────────┼─────────┼─────────────┼──────────────┤");
 
         for process in processes {
-            let name = if process.name.len() > 19 {
-                format!("{}…", &process.name[..18])
+            let name = if process.name.chars().count() > 19 {
+                format!("{}…", process.name.chars().take(18).collect::<String>())
             } else {
                 process.name.clone()
             };
 
-            let status = if process.status.len() > 12 {
-                format!("{}…", &process.status[..11])
+            let status = if process.status.chars().count() > 12 {
+                format!("{}…", process.status.chars().take(11).collect::<String>())
             } else {
                 process.status.clone()
             };

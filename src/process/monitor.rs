@@ -49,6 +49,14 @@ impl ProcessMonitor {
         processes.truncate(limit);
         processes
     }
+
+    pub fn get_system_cpu_usage(&mut self) -> f32 {
+        if self.should_update() {
+            self.manager.refresh();
+            self.last_update = Instant::now();
+        }
+        self.manager.get_system_cpu_usage()
+    }
 }
 
 impl Default for ProcessMonitor {

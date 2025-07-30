@@ -112,6 +112,10 @@ impl ProcessManager {
             .map(|(&pid, process)| ProcessInfo::from_sysinfo(pid, process))
             .collect()
     }
+
+    pub fn get_system_cpu_usage(&self) -> f32 {
+        self.system.global_cpu_info().cpu_usage()
+    }
 }
 
 impl Default for ProcessManager {

@@ -1,5 +1,7 @@
-use crate::network::{PortInfo, PortManager};
+use crate::config::settings::{load_settings, save_settings, UserSettings};
+use crate::network::{ConnectionInfo, PortInfo, PortManager};
 use crate::process::{ProcessInfo, ProcessMonitor};
+use crate::tui::themes::{Theme, ThemeManager};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::{Duration, Instant};
@@ -10,6 +12,7 @@ pub enum AppMode {
     ProcessView,
     PortView,
     ConnectionView,
+    ThemeSelector,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,6 +22,8 @@ pub enum SortBy {
     Cpu,
     Memory,
     Port,
+    LocalAddress,
+    RemoteAddress,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -44,6 +49,8 @@ pub struct AppState {
     pub filtered_processes: Vec<ProcessInfo>,
     pub ports: Vec<PortInfo>,
     pub filtered_ports: Vec<PortInfo>,
+    pub connections: Vec<ConnectionInfo>,
+    pub filtered_connections: Vec<ConnectionInfo>,
 
     // Monitoring
     pub process_monitor: ProcessMonitor,
@@ -54,6 +61,13 @@ pub struct AppState {
     // Multi-selection
     pub selected_items: Vec<usize>,
     pub multi_select_mode: bool,
+
+    // CPU History for sparkline
+    pub cpu_history: Vec<u64>,
+
+    // Theming
+    pub themes: Vec<Theme>,
+    pub current_theme_index: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +89,13 @@ impl AppState {
         let mut process_monitor = ProcessMonitor::new();
         let processes = process_monitor.get_processes();
         let ports = PortManager::get_all_ports()?;
+        let connections = PortManager::get_active_connections()?;
+        let themes = ThemeManager::get_themes();
+        let settings = load_settings().unwrap_or_default();
+        let current_theme_index = themes
+            .iter()
+            .position(|t| t.name == settings.theme_name)
+            .unwrap_or(0);
 
         Ok(Self {
             mode: AppMode::Dashboard,
@@ -90,8 +111,10 @@ impl AppState {
 
             filtered_processes: processes.clone(),
             processes,
+            ports: ports.clone(),
             filtered_ports: ports.clone(),
-            ports,
+            connections: connections.clone(),
+            filtered_connections: connections,
 
             process_monitor,
             last_refresh: Instant::now(),
@@ -100,6 +123,11 @@ impl AppState {
 
             selected_items: Vec::new(),
             multi_select_mode: false,
+
+            cpu_history: vec![0; 100], // Store last 100 CPU usage points
+
+            themes,
+            current_theme_index,
         })
     }
 
@@ -159,6 +187,34 @@ impl AppState {
         }
 
         // Handle normal mode keys
+        if self.mode == AppMode::ThemeSelector {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.selected_index = self.selected_index.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if self.selected_index < self.themes.len() - 1 {
+                        self.selected_index += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    self.current_theme_index = self.selected_index;
+                    let settings = UserSettings {
+                        theme_name: self.themes[self.current_theme_index].name.clone(),
+                    };
+                    if let Err(e) = save_settings(&settings) {
+                        self.set_status_message(format!("Error saving settings: {e}"));
+                    }
+                    self.mode = AppMode::Dashboard; // Go back to dashboard after selection
+                }
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.mode = AppMode::Dashboard;
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
         match key.code {
             // Navigation
             KeyCode::Up | KeyCode::Char('k') => self.move_up(),
@@ -175,6 +231,8 @@ impl AppState {
             KeyCode::F(4) | KeyCode::Char('?') => self.toggle_help(),
 
             // Actions
+            KeyCode::Char('d') => self.mode = AppMode::Dashboard, // Go to Dashboard
+            KeyCode::Char('t') => self.mode = AppMode::ThemeSelector, // Go to Theme Selector
             KeyCode::Char('/') => self.enter_search_mode(),
             KeyCode::Char('r') => self.refresh_data()?,
             KeyCode::Char(' ') => self.toggle_selection(),
@@ -206,6 +264,13 @@ impl AppState {
     pub fn refresh_data(&mut self) -> Result<()> {
         self.processes = self.process_monitor.get_processes();
         self.ports = PortManager::get_all_ports()?;
+        self.connections = PortManager::get_active_connections()?;
+
+        // Update CPU history with actual system CPU usage (0-100%)
+        let system_cpu_usage = self.process_monitor.get_system_cpu_usage() as u64;
+        self.cpu_history.remove(0);
+        self.cpu_history.push(system_cpu_usage);
+
         self.apply_current_filters();
         self.last_refresh = Instant::now();
         self.set_status_message("Data refreshed".to_string());
@@ -237,17 +302,29 @@ impl AppState {
                     .collect();
                 self.sort_ports();
             }
+            AppMode::ConnectionView => {
+                self.filtered_connections = self
+                    .connections
+                    .iter()
+                    .filter(|c| c.matches_search(&self.search_query))
+                    .cloned()
+                    .collect();
+                // TODO: Add sorting for connections if needed
+            }
             _ => {}
         }
 
         self.selected_index = 0;
     }
 
-    pub fn reset_filters(&mut self) {
+    fn reset_filters(&mut self) {
         self.filtered_processes = self.processes.clone();
         self.filtered_ports = self.ports.clone();
+        self.filtered_connections = self.connections.clone();
         self.apply_current_sorts();
-        self.selected_index = 0;
+        if self.mode != AppMode::ThemeSelector {
+            self.selected_index = 0;
+        }
     }
 
     fn apply_current_filters(&mut self) {
@@ -261,6 +338,7 @@ impl AppState {
     fn apply_current_sorts(&mut self) {
         self.sort_processes();
         self.sort_ports();
+        self.sort_connections();
     }
 
     fn sort_processes(&mut self) {
@@ -325,6 +403,42 @@ impl AppState {
         }
     }
 
+    fn sort_connections(&mut self) {
+        match self.sort_by {
+            SortBy::LocalAddress => {
+                self.filtered_connections.sort_by(|a, b| {
+                    let cmp = a.local_address.cmp(&b.local_address);
+                    if self.sort_order == SortOrder::Ascending {
+                        cmp
+                    } else {
+                        cmp.reverse()
+                    }
+                });
+            }
+            SortBy::RemoteAddress => {
+                self.filtered_connections.sort_by(|a, b| {
+                    let cmp = a.remote_address.cmp(&b.remote_address);
+                    if self.sort_order == SortOrder::Ascending {
+                        cmp
+                    } else {
+                        cmp.reverse()
+                    }
+                });
+            }
+            SortBy::Pid => {
+                self.filtered_connections.sort_by(|a, b| {
+                    let cmp = a.pid.cmp(&b.pid);
+                    if self.sort_order == SortOrder::Ascending {
+                        cmp
+                    } else {
+                        cmp.reverse()
+                    }
+                });
+            }
+            _ => {}
+        }
+    }
+
     // Navigation methods
     fn move_up(&mut self) {
         if self.selected_index > 0 {
@@ -336,6 +450,7 @@ impl AppState {
         let max_index = match self.mode {
             AppMode::ProcessView => self.filtered_processes.len().saturating_sub(1),
             AppMode::PortView => self.filtered_ports.len().saturating_sub(1),
+            AppMode::ConnectionView => self.filtered_connections.len().saturating_sub(1),
             _ => 0,
         };
 
@@ -412,6 +527,13 @@ impl AppState {
                 self.sort_order = match self.sort_order {
                     SortOrder::Ascending => SortOrder::Descending,
                     SortOrder::Descending => SortOrder::Ascending,
+                };
+            }
+            AppMode::ConnectionView => {
+                self.sort_by = match self.sort_by {
+                    SortBy::LocalAddress => SortBy::RemoteAddress,
+                    SortBy::RemoteAddress => SortBy::Pid,
+                    _ => SortBy::LocalAddress,
                 };
             }
             _ => {}
@@ -588,6 +710,13 @@ mod tests {
 
     fn create_test_app_state() -> AppState {
         // Create a minimal test app state without system calls
+        let themes = ThemeManager::get_themes();
+        let settings = UserSettings::default();
+        let current_theme_index = themes
+            .iter()
+            .position(|t| t.name == settings.theme_name)
+            .unwrap_or(0);
+
         AppState {
             mode: AppMode::Dashboard,
             should_quit: false,
@@ -604,6 +733,8 @@ mod tests {
             filtered_processes: vec![],
             ports: vec![],
             filtered_ports: vec![],
+            connections: vec![],
+            filtered_connections: vec![],
 
             process_monitor: ProcessMonitor::new(),
             last_refresh: Instant::now(),
@@ -612,6 +743,10 @@ mod tests {
 
             selected_items: Vec::new(),
             multi_select_mode: false,
+
+            cpu_history: vec![0; 100],
+            themes,
+            current_theme_index,
         }
     }
 
@@ -933,5 +1068,56 @@ mod tests {
         // Reset filters
         app.reset_filters();
         assert_eq!(app.filtered_processes.len(), 2);
+    }
+
+    #[test]
+    fn test_connection_view_filtering() {
+        use crate::network::Protocol;
+
+        let mut app = create_test_app_state();
+        app.connections = vec![
+            ConnectionInfo {
+                protocol: Protocol::Tcp,
+                local_address: "127.0.0.1:1234".parse().unwrap(),
+                remote_address: "1.1.1.1:443".parse().unwrap(),
+                pid: Some(100),
+                process_name: Some("chrome".to_string()),
+            },
+            ConnectionInfo {
+                protocol: Protocol::Tcp,
+                local_address: "127.0.0.1:5678".parse().unwrap(),
+                remote_address: "2.2.2.2:80".parse().unwrap(),
+                pid: Some(200),
+                process_name: Some("firefox".to_string()),
+            },
+        ];
+
+        app.mode = AppMode::ConnectionView;
+        app.reset_filters(); // Initialize filtered_connections
+
+        // Test search by process name
+        app.search_query = "chrome".to_string();
+        app.apply_search_filter();
+        assert_eq!(app.filtered_connections.len(), 1);
+        assert_eq!(
+            app.filtered_connections[0].process_name.as_deref(),
+            Some("chrome")
+        );
+
+        // Test search by IP address
+        app.search_query = "2.2.2.2".to_string();
+        app.apply_search_filter();
+        assert_eq!(app.filtered_connections.len(), 1);
+        assert_eq!(app.filtered_connections[0].pid, Some(200));
+
+        // Test search by PID
+        app.search_query = "100".to_string();
+        app.apply_search_filter();
+        assert_eq!(app.filtered_connections.len(), 1);
+
+        // Reset filters
+        app.search_query = "".to_string();
+        app.apply_search_filter();
+        assert_eq!(app.filtered_connections.len(), 2);
     }
 }

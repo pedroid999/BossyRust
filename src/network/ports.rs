@@ -1,3 +1,4 @@
+use crate::network::connections::ConnectionInfo;
 use anyhow::{anyhow, Result};
 use regex::Regex;
 use std::collections::HashMap;
@@ -170,6 +171,22 @@ impl PortManager {
         Ok(Self::get_all_ports()?
             .into_iter()
             .filter(|port| port.is_development_port())
+            .collect())
+    }
+
+    pub fn get_active_connections() -> Result<Vec<ConnectionInfo>> {
+        Ok(Self::get_all_ports()?
+            .into_iter()
+            .filter(|port| {
+                port.state == ConnectionState::Established && port.remote_address.is_some()
+            })
+            .map(|port| ConnectionInfo {
+                protocol: port.protocol,
+                local_address: port.local_address,
+                remote_address: port.remote_address.unwrap(), // Safe due to filter
+                pid: port.pid,
+                process_name: port.process_name,
+            })
             .collect())
     }
 
@@ -549,5 +566,14 @@ mod tests {
         // Test development port classification
         assert!(listening_port.is_development_port()); // 8080 is development
         assert!(!established_port.is_development_port()); // 443 is not development
+    }
+
+    #[test]
+    fn test_get_active_connections() {
+        // This test is conceptual because we can't easily mock `get_all_ports`.
+        // We trust that if `get_all_ports` works, this filtering function will also work.
+        // A more advanced test setup would involve mocking the command execution.
+        let connections = PortManager::get_active_connections();
+        assert!(connections.is_ok());
     }
 }

@@ -30,8 +30,9 @@ A lightweight Terminal User Interface (TUI) process manager for macOS that combi
   - Service identification for well-known ports
 
 ### Terminal User Interface
-- **Multi-Panel Dashboard**: Overview with top processes and port summary
-- **Dedicated Views**: Separate process and port management interfaces
+- **Multi-Panel Dashboard**: Overview with top processes, port summary, and a CPU usage chart.
+- **Theming**: Choose from 10 popular color schemes (e.g., Kanagawa, Dracula, Nord). Your choice is saved for future sessions.
+- **Dedicated Views**: Separate process and port management interfaces.
 - **Intuitive Navigation**: Function keys (F1-F4) for view switching
 - **Real-time Updates**: Configurable auto-refresh (default: 2 seconds)
 - **Multi-selection**: Select and kill multiple processes at once
@@ -107,6 +108,7 @@ bossy-rust find-port 3000 3100
 | `F1` | Switch to Process View |
 | `F2` | Switch to Port View |
 | `F3` | Switch to Connection View |
+| `t` | Switch to Theme Selector |
 | `F4` / `?` | Show Help |
 | `/` | Enter search mode |
 | `k` / `Delete` | Kill selected item |
@@ -181,16 +183,15 @@ src/
 │   ├── killer.rs       # Process termination logic
 │   └── monitor.rs      # Real-time monitoring
 ├── network/            # Network port management
+│   ├── connections.rs  # Active connection tracking
 │   ├── ports.rs        # Port enumeration and mapping
-│   ├── connections.rs  # Connection tracking
 │   └── utils.rs        # Network utilities
 ├── tui/                # Terminal User Interface
 │   ├── app.rs          # Application state management
 │   ├── dashboard.rs    # Main rendering logic
 │   └── events.rs       # Event handling
 └── commands/           # CLI command implementations
-    ├── cli.rs          # Command handlers
-    └── shortcuts.rs    # Quick actions
+    └── cli.rs          # Command handlers
 ```
 
 ## 🚨 Security & Safety

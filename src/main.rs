@@ -1,4 +1,5 @@
 mod commands;
+mod config;
 mod network;
 mod process;
 mod tui;
