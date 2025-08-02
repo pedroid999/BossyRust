@@ -10,6 +10,10 @@ license = "MIT"
 name = "bossy-rust"
 path = "src/main.rs"
 
+[lib]
+name = "bossy_rust"
+path = "src/lib.rs"
+
 [dependencies]
 # TUI Framework
 ratatui = "0.26"
@@ -41,3 +45,8 @@ mockall = "0.12"
 tempfile = "3.0"
 assert_cmd = "2.0"
 predicates = "3.0"
+proptest = "1.0"
+criterion = { version = "0.5", features = ["html_reports"] }
+# ratatui-test = "0.3"  # Not available on crates.io, using custom testing framework
+serial_test = "3.0"
+insta = "1.34"

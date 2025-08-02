@@ -684,6 +684,13 @@ impl AppState {
         self.status_message = Some((message, Instant::now()));
     }
 
+    pub fn switch_to_mode(&mut self, mode: AppMode) {
+        self.mode = mode;
+        self.selected_index = 0;
+        self.selected_items.clear();
+        self.multi_select_mode = false;
+    }
+
     pub fn get_status_message(&self) -> Option<&str> {
         if let Some((ref message, timestamp)) = self.status_message {
             if timestamp.elapsed() < Duration::from_secs(5) {

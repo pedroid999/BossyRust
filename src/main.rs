@@ -4,6 +4,9 @@ mod network;
 mod process;
 mod tui;
 
+#[cfg(test)]
+mod testing;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use crossterm::{
