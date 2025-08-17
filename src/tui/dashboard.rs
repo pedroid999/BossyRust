@@ -2,7 +2,7 @@ use crate::tui::themes::Theme;
 use crate::tui::AppState;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{BarChart, Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
@@ -43,11 +43,11 @@ fn render_main_dashboard(f: &mut Frame, app: &AppState, theme: &Theme, area: Rec
         .constraints([
             Constraint::Length(3), // Header
             Constraint::Min(0),    // Main content
-            Constraint::Length(3), // Status
+            Constraint::Length(2), // Enhanced Status
         ])
         .split(area);
 
-    // Header
+    // Header with improved navigation hints
     let header = Paragraph::new(vec![
         Line::from(vec![
             Span::styled(
@@ -58,7 +58,7 @@ fn render_main_dashboard(f: &mut Frame, app: &AppState, theme: &Theme, area: Rec
             ),
             Span::raw("- Mac Process Manager").style(Style::default().fg(theme.foreground)),
         ]),
-        Line::from("d: Dashboard | F1: Processes | F2: Ports | F3: Connections | t: Themes | F4: Help | q: Quit")
+        Line::from("1: Dashboard | 2: Processes | 3: Ports | 4: Connections | 5: Themes | h: Help | q: Quit")
             .style(Style::default().fg(theme.text_secondary)),
     ])
     .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(theme.border)));
@@ -231,7 +231,7 @@ fn render_process_view(f: &mut Frame, app: &mut AppState, theme: &Theme, area: R
         .constraints([
             Constraint::Length(3), // Header
             Constraint::Min(0),    // Process list
-            Constraint::Length(3), // Status
+            Constraint::Length(2), // Enhanced Status
         ])
         .split(area);
 
@@ -249,7 +249,7 @@ fn render_process_view(f: &mut Frame, app: &mut AppState, theme: &Theme, area: R
         )
     } else {
         format!(
-            "Processes ({}) - Sorted by {:?} {} | / to search | k to kill | space to select",
+            "Processes ({}) - Sorted by {:?} {} | / search | x kill | space select | s sort | Esc back",
             app.filtered_processes.len(),
             app.sort_by,
             sort_indicator
@@ -324,7 +324,7 @@ fn render_port_view(f: &mut Frame, app: &mut AppState, theme: &Theme, area: Rect
         .constraints([
             Constraint::Length(3), // Header
             Constraint::Min(0),    // Port list
-            Constraint::Length(3), // Status
+            Constraint::Length(2), // Enhanced Status
         ])
         .split(area);
 
@@ -337,7 +337,7 @@ fn render_port_view(f: &mut Frame, app: &mut AppState, theme: &Theme, area: Rect
         )
     } else {
         format!(
-            "Ports ({}) | / to search | k to kill | :port for quick search",
+            "Ports ({}) | / search | x kill | :port pattern | s sort | Esc back",
             app.filtered_ports.len()
         )
     };
@@ -429,7 +429,7 @@ fn render_connection_view(f: &mut Frame, app: &mut AppState, theme: &Theme, area
         .constraints([
             Constraint::Length(3), // Header
             Constraint::Min(0),    // Connection list
-            Constraint::Length(3), // Status
+            Constraint::Length(2), // Enhanced Status
         ])
         .split(area);
 
@@ -441,7 +441,7 @@ fn render_connection_view(f: &mut Frame, app: &mut AppState, theme: &Theme, area
         )
     } else {
         format!(
-            "Active Connections ({}) | / to search",
+            "Active Connections ({}) | / search | s sort | Esc back",
             app.filtered_connections.len()
         )
     };
@@ -568,11 +568,20 @@ fn render_theme_selector(f: &mut Frame, app: &mut AppState, theme: &Theme, area:
 fn render_status_bar(f: &mut Frame, app: &AppState, theme: &Theme, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .constraints([Constraint::Min(0), Constraint::Length(2)])
         .split(area);
 
+    // Enhanced status bar with loading indicators
+    let status_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+        .split(chunks[1]);
+
+    // Main status text
     let status_text = if let Some(message) = app.get_status_message() {
         message.to_string()
+    } else if let Some(loading_msg) = app.get_loading_message() {
+        loading_msg
     } else {
         format!(
             "Mode: {:?} | Items: {} | {} | Ctrl+R: Refresh | Ctrl+C: Quit",
@@ -591,30 +600,113 @@ fn render_status_bar(f: &mut Frame, app: &AppState, theme: &Theme, area: Rect) {
         )
     };
 
-    let status =
-        Paragraph::new(status_text).style(Style::default().fg(theme.foreground).bg(theme.primary));
+    // Status color based on app status
+    let status_style = match &app.app_status {
+        crate::tui::AppStatus::Ready => Style::default().fg(theme.foreground).bg(theme.primary),
+        crate::tui::AppStatus::Loading(_) => Style::default().fg(theme.background).bg(theme.accent),
+        crate::tui::AppStatus::Processing(_) => Style::default().fg(theme.background).bg(theme.secondary),
+        crate::tui::AppStatus::Error(_) => Style::default().fg(theme.foreground).bg(Color::Red),
+        crate::tui::AppStatus::Success(_) => Style::default().fg(theme.background).bg(Color::Green),
+    };
 
-    f.render_widget(status, chunks[1]);
+    let status = Paragraph::new(status_text).style(status_style);
+    f.render_widget(status, status_chunks[0]);
+
+    // Loading indicator and progress
+    if app.is_loading() {
+        let loading_text = match &app.loading_state {
+            crate::tui::LoadingState::RefreshingData => "⟳ Refreshing...",
+            crate::tui::LoadingState::KillingProcess(_) => "⚡ Killing...",
+            crate::tui::LoadingState::KillingPort(_) => "⚡ Killing...",
+            crate::tui::LoadingState::SearchingData => "🔍 Searching...",
+            _ => "⟳ Working...",
+        };
+        
+        let loading_indicator = Paragraph::new(loading_text)
+            .style(Style::default().fg(theme.accent).add_modifier(Modifier::BOLD));
+        f.render_widget(loading_indicator, status_chunks[1]);
+    } else {
+        // Show refresh timer or other info when not loading
+        let last_refresh = app.last_refresh.elapsed().as_secs();
+        let refresh_info = format!("Last refresh: {}s ago", last_refresh);
+        let info = Paragraph::new(refresh_info)
+            .style(Style::default().fg(theme.text_secondary));
+        f.render_widget(info, status_chunks[1]);
+    }
 }
 
 fn render_confirmation_dialog(f: &mut Frame, app: &AppState, theme: &Theme, area: Rect) {
     if let Some(ref dialog) = app.confirmation_dialog {
-        let popup_area = centered_rect(50, 30, area);
+        let popup_area = centered_rect(60, 40, area);
 
         f.render_widget(Clear, popup_area);
 
-        let dialog_text = vec![
-            Line::from(dialog.message.clone()),
+        // Determine colors based on danger level
+        let (border_color, title_color, accent_color) = match dialog.danger_level {
+            crate::tui::DangerLevel::Low => (theme.secondary, theme.secondary, theme.secondary),
+            crate::tui::DangerLevel::Medium => (theme.accent, theme.accent, theme.accent),
+            crate::tui::DangerLevel::High => (Color::Yellow, Color::Yellow, Color::Yellow),
+            crate::tui::DangerLevel::Critical => (Color::Red, Color::Red, Color::Red),
+        };
+
+        let danger_indicator = match dialog.danger_level {
+            crate::tui::DangerLevel::Low => "ℹ️",
+            crate::tui::DangerLevel::Medium => "⚠️",
+            crate::tui::DangerLevel::High => "🔥",
+            crate::tui::DangerLevel::Critical => "💀",
+        };
+
+        let mut dialog_lines = vec![
+            Line::from(vec![
+                Span::styled(danger_indicator, Style::default().fg(accent_color)),
+                Span::raw(" "),
+                Span::styled(dialog.title.clone(), Style::default().fg(title_color).add_modifier(Modifier::BOLD)),
+            ]),
             Line::from(""),
-            Line::from("y - Yes    n - No"),
+            Line::from(dialog.message.clone()).style(Style::default().fg(theme.foreground)),
         ];
 
-        let dialog_widget = Paragraph::new(dialog_text)
+        // Add context information if available
+        if let Some(ref context) = dialog.context_info {
+            dialog_lines.push(Line::from(""));
+            dialog_lines.push(Line::from(vec![
+                Span::styled("Details: ", Style::default().fg(theme.text_secondary).add_modifier(Modifier::BOLD)),
+                Span::raw(context.clone()).style(Style::default().fg(theme.text_secondary)),
+            ]));
+        }
+
+        dialog_lines.push(Line::from(""));
+        dialog_lines.push(Line::from(""));
+
+        // Enhanced confirmation options
+        match dialog.danger_level {
+            crate::tui::DangerLevel::Critical => {
+                dialog_lines.push(Line::from(vec![
+                    Span::styled("Type 'YES' to confirm: ", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+                    Span::styled(&app.critical_confirmation_buffer, Style::default().fg(Color::Red).bg(theme.highlight)),
+                    Span::styled("_", Style::default().fg(Color::Red)),
+                ]));
+                dialog_lines.push(Line::from(vec![
+                    Span::styled("n/Esc", Style::default().fg(theme.secondary)),
+                    Span::raw(" - Cancel"),
+                ]));
+            },
+            _ => {
+                dialog_lines.push(Line::from(vec![
+                    Span::styled("y/Enter", Style::default().fg(accent_color).add_modifier(Modifier::BOLD)),
+                    Span::raw(" - Confirm  |  "),
+                    Span::styled("n/Esc", Style::default().fg(theme.secondary)),
+                    Span::raw(" - Cancel"),
+                ]));
+            }
+        }
+
+        let dialog_widget = Paragraph::new(dialog_lines)
             .block(
                 Block::default()
-                    .title(dialog.title.as_str())
+                    .title(" Confirmation Required ")
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme.accent)),
+                    .border_style(Style::default().fg(border_color)),
             )
             .style(Style::default().fg(theme.foreground))
             .wrap(Wrap { trim: true });
@@ -642,9 +734,9 @@ fn render_help_dialog(f: &mut Frame, theme: &Theme, area: Rect) {
                 .fg(theme.secondary)
                 .add_modifier(Modifier::BOLD),
         )]),
-        Line::from("  d: Dashboard | t: Themes | F1-F3: Views | F4: Help"),
-        Line::from("  ↑/↓ or j/k - Navigate    Space - Multi-select"),
-        Line::from("  Page Up/Down - Fast scroll    Home/End - Go to top/bottom"),
+        Line::from("  1: Dashboard | 2: Processes | 3: Ports | 4: Connections | 5: Themes"),
+        Line::from("  ↑/↓ or j/k - Navigate    u/d - Page up/down    g/G - Top/bottom"),
+        Line::from("  Space - Multi-select    c - Clear selection    Esc - Smart back"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "Actions:",
@@ -652,9 +744,9 @@ fn render_help_dialog(f: &mut Frame, theme: &Theme, area: Rect) {
                 .fg(theme.secondary)
                 .add_modifier(Modifier::BOLD),
         )]),
-        Line::from("  Enter/k/Delete - Kill selected process/port"),
+        Line::from("  Enter/x/Delete - Kill selected process/port"),
         Line::from("  / - Search mode    s - Cycle sort options"),
-        Line::from("  r/Ctrl+R - Refresh data    Ctrl+C - Force quit"),
+        Line::from("  r/Ctrl+R - Refresh data    q - Quit    h - Help"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "Search Patterns:",
@@ -678,7 +770,7 @@ fn render_help_dialog(f: &mut Frame, theme: &Theme, area: Rect) {
         Line::from("  • Use Ctrl+R to refresh if data seems stale"),
         Line::from("  • Connection view requires active network connections"),
         Line::from(""),
-        Line::from("Press F4, ?, or Esc to close this help"),
+        Line::from("Press h, ?, or Esc to close this help"),
     ];
 
     let help_widget = Paragraph::new(help_text)

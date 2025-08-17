@@ -16,6 +16,24 @@ pub enum AppMode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum AppStatus {
+    Ready,
+    Loading(String),
+    Processing(String),
+    Error(String),
+    Success(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LoadingState {
+    Idle,
+    RefreshingData,
+    KillingProcess(u32),
+    KillingPort(u16),
+    SearchingData,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum SortBy {
     Name,
     Pid,
@@ -42,7 +60,11 @@ pub struct AppState {
     pub sort_order: SortOrder,
     pub show_help: bool,
     pub status_message: Option<(String, Instant)>,
+    pub app_status: AppStatus,
+    pub loading_state: LoadingState,
     pub confirmation_dialog: Option<ConfirmationDialog>,
+    pub operation_progress: Option<f32>, // 0.0 to 1.0 for progress indication
+    pub critical_confirmation_buffer: String, // For typing "YES" for critical operations
 
     // Data
     pub processes: Vec<ProcessInfo>,
@@ -75,6 +97,16 @@ pub struct ConfirmationDialog {
     pub title: String,
     pub message: String,
     pub confirm_action: DialogAction,
+    pub danger_level: DangerLevel,
+    pub context_info: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DangerLevel {
+    Low,      // Safe operations like refresh
+    Medium,   // Single process kill
+    High,     // Multiple process kill or system processes
+    Critical, // Bulk operations or important processes
 }
 
 #[derive(Debug, Clone)]
@@ -107,7 +139,11 @@ impl AppState {
             sort_order: SortOrder::Descending,
             show_help: false,
             status_message: None,
+            app_status: AppStatus::Ready,
+            loading_state: LoadingState::Idle,
             confirmation_dialog: None,
+            operation_progress: None,
+            critical_confirmation_buffer: String::new(),
 
             filtered_processes: processes.clone(),
             processes,
@@ -148,15 +184,48 @@ impl AppState {
         }
 
         // Handle confirmation dialog
-        if let Some(_dialog) = &self.confirmation_dialog {
-            match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                    self.execute_dialog_action().await?;
+        if let Some(dialog) = &self.confirmation_dialog {
+            match dialog.danger_level {
+                DangerLevel::Critical => {
+                    // Critical operations require typing "YES"
+                    match key.code {
+                        KeyCode::Char(c) if c == 'n' || c == 'N' => {
+                            self.confirmation_dialog = None;
+                            self.critical_confirmation_buffer.clear();
+                        }
+                        KeyCode::Char(c) => {
+                            self.critical_confirmation_buffer.push(c.to_ascii_uppercase());
+                            if self.critical_confirmation_buffer == "YES" {
+                                self.critical_confirmation_buffer.clear();
+                                self.execute_dialog_action().await?;
+                            } else if !self.critical_confirmation_buffer.is_empty() && !"YES".starts_with(&self.critical_confirmation_buffer) {
+                                // Invalid input, clear buffer
+                                self.critical_confirmation_buffer.clear();
+                                self.set_status_message("Type 'YES' to confirm critical operation".to_string());
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            self.critical_confirmation_buffer.pop();
+                        }
+                        KeyCode::Esc => {
+                            self.confirmation_dialog = None;
+                            self.critical_confirmation_buffer.clear();
+                        }
+                        _ => {}
+                    }
                 }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                    self.confirmation_dialog = None;
+                _ => {
+                    // Standard confirmation for non-critical operations
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                            self.execute_dialog_action().await?;
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            self.confirmation_dialog = None;
+                        }
+                        _ => {}
+                    }
                 }
-                _ => {}
             }
             return Ok(());
         }
@@ -216,34 +285,45 @@ impl AppState {
         }
 
         match key.code {
-            // Navigation
+            // Navigation (Consistent across all modes)
             KeyCode::Up | KeyCode::Char('k') => self.move_up(),
             KeyCode::Down | KeyCode::Char('j') => self.move_down(),
-            KeyCode::PageUp => self.page_up(),
-            KeyCode::PageDown => self.page_down(),
-            KeyCode::Home => self.go_to_top(),
-            KeyCode::End => self.go_to_bottom(),
+            KeyCode::PageUp | KeyCode::Char('u') => self.page_up(),
+            KeyCode::PageDown | KeyCode::Char('d') => self.page_down(),
+            KeyCode::Home | KeyCode::Char('g') => self.go_to_top(),
+            KeyCode::End | KeyCode::Char('G') => self.go_to_bottom(),
 
-            // Mode switching
-            KeyCode::F(1) => self.mode = AppMode::ProcessView,
-            KeyCode::F(2) => self.mode = AppMode::PortView,
-            KeyCode::F(3) => self.mode = AppMode::ConnectionView,
-            KeyCode::F(4) | KeyCode::Char('?') => self.toggle_help(),
+            // Mode switching (Numbers for consistency)
+            KeyCode::Char('1') => self.switch_to_mode(AppMode::Dashboard),
+            KeyCode::Char('2') => self.switch_to_mode(AppMode::ProcessView),
+            KeyCode::Char('3') => self.switch_to_mode(AppMode::PortView),
+            KeyCode::Char('4') => self.switch_to_mode(AppMode::ConnectionView),
+            KeyCode::Char('5') => self.switch_to_mode(AppMode::ThemeSelector),
+            
+            // Legacy F-keys for compatibility
+            KeyCode::F(1) => self.switch_to_mode(AppMode::ProcessView),
+            KeyCode::F(2) => self.switch_to_mode(AppMode::PortView),
+            KeyCode::F(3) => self.switch_to_mode(AppMode::ConnectionView),
+            KeyCode::F(4) | KeyCode::Char('?') | KeyCode::Char('h') => self.toggle_help(),
 
-            // Actions
-            KeyCode::Char('d') => self.mode = AppMode::Dashboard, // Go to Dashboard
-            KeyCode::Char('t') => self.mode = AppMode::ThemeSelector, // Go to Theme Selector
+            // Actions (Consistent mnemonics)
             KeyCode::Char('/') => self.enter_search_mode(),
             KeyCode::Char('r') => self.refresh_data()?,
             KeyCode::Char(' ') => self.toggle_selection(),
             KeyCode::Enter => self.primary_action().await?,
-            KeyCode::Delete => self.kill_action(),
+            KeyCode::Delete | KeyCode::Char('x') => self.kill_action(),
 
             // Sorting
             KeyCode::Char('s') => self.cycle_sort(),
+            
+            // Clear/Reset actions
+            KeyCode::Char('c') => self.clear_selection(),
 
-            // Quit
-            KeyCode::Char('q') | KeyCode::Esc => {
+            // Smart Escape handling
+            KeyCode::Esc => self.handle_escape(),
+            
+            // Quit (only 'q' for simplicity)
+            KeyCode::Char('q') => {
                 if self.show_help {
                     self.show_help = false;
                 } else {
@@ -262,6 +342,11 @@ impl AppState {
     }
 
     pub fn refresh_data(&mut self) -> Result<()> {
+        // Set loading state
+        self.loading_state = LoadingState::RefreshingData;
+        self.app_status = AppStatus::Loading("Refreshing system data...".to_string());
+        
+        // Refresh data
         self.processes = self.process_monitor.get_processes();
         self.ports = PortManager::get_all_ports()?;
         self.connections = PortManager::get_active_connections()?;
@@ -273,7 +358,16 @@ impl AppState {
 
         self.apply_current_filters();
         self.last_refresh = Instant::now();
-        self.set_status_message("Data refreshed".to_string());
+        
+        // Reset loading state and show success
+        self.loading_state = LoadingState::Idle;
+        self.app_status = AppStatus::Success(format!(
+            "Refreshed {} processes, {} ports, {} connections",
+            self.processes.len(),
+            self.ports.len(),
+            self.connections.len()
+        ));
+        self.set_status_message("Data refreshed successfully".to_string());
         Ok(())
     }
 
@@ -282,6 +376,9 @@ impl AppState {
             self.reset_filters();
             return;
         }
+
+        // Set loading state for search
+        self.loading_state = LoadingState::SearchingData;
 
         match self.mode {
             AppMode::ProcessView => {
@@ -314,6 +411,8 @@ impl AppState {
             _ => {}
         }
 
+        // Reset loading state after search completes
+        self.loading_state = LoadingState::Idle;
         self.selected_index = 0;
     }
 
@@ -590,37 +689,119 @@ impl AppState {
 
     fn show_kill_process_dialog(&mut self, pid: u32) {
         // Create dialog regardless of whether process exists (for testing)
-        let process_name = self
+        let process_info = self
             .processes
             .iter()
-            .find(|p| p.pid == pid)
+            .find(|p| p.pid == pid);
+            
+        let process_name = process_info
             .map(|p| p.name.clone())
             .unwrap_or_else(|| format!("PID {pid}"));
+            
+        let cpu_usage = process_info.map(|p| p.cpu_usage).unwrap_or(0.0);
+        let memory = process_info.map(|p| p.memory).unwrap_or(0);
+        
+        // Determine danger level based on process characteristics
+        let danger_level = if process_name.contains("system") || process_name.contains("kernel") || pid < 100 {
+            DangerLevel::Critical
+        } else if cpu_usage > 50.0 || memory > 1024 * 1024 * 1024 { // >1GB
+            DangerLevel::High
+        } else {
+            DangerLevel::Medium
+        };
+        
+        let context_info = if let Some(process) = process_info {
+            Some(format!(
+                "CPU: {:.1}% | Memory: {} | Status: {}",
+                process.cpu_usage,
+                process.format_memory(),
+                process.status
+            ))
+        } else {
+            None
+        };
 
         self.confirmation_dialog = Some(ConfirmationDialog {
-            title: "Kill Process".to_string(),
+            title: "Terminate Process".to_string(),
             message: format!(
-                "Kill process '{process_name}' (PID: {pid})?\nPress 'y' to confirm, 'n' to cancel"
+                "Are you sure you want to terminate '{}'?\n\nPID: {}\n\nThis action cannot be undone.",
+                process_name, pid
             ),
             confirm_action: DialogAction::Process(pid),
+            danger_level,
+            context_info,
         });
     }
 
     fn show_kill_port_dialog(&mut self, port: u16) {
+        // Find port information for context
+        let port_info = self.ports.iter().find(|p| p.port == port);
+        
+        let process_name = port_info
+            .and_then(|p| p.process_name.as_ref())
+            .unwrap_or(&"Unknown".to_string())
+            .clone();
+            
+        let danger_level = if port < 1024 {
+            DangerLevel::High  // System ports
+        } else if port_info.map(|p| p.is_development_port()).unwrap_or(false) {
+            DangerLevel::Low   // Development ports
+        } else {
+            DangerLevel::Medium
+        };
+        
+        let context_info = port_info.map(|p| {
+            format!(
+                "Protocol: {:?} | State: {:?} | Process: {}",
+                p.protocol,
+                p.state,
+                p.process_name.as_deref().unwrap_or("Unknown")
+            )
+        });
+
         self.confirmation_dialog = Some(ConfirmationDialog {
-            title: "Kill Port".to_string(),
+            title: "Terminate Port Process".to_string(),
             message: format!(
-                "Kill process using port {port}?\nPress 'y' to confirm, 'n' to cancel"
+                "Are you sure you want to terminate the process using port {}?\n\nProcess: {}\n\nThis will close the port and may affect running services.",
+                port, process_name
             ),
             confirm_action: DialogAction::Port(port),
+            danger_level,
+            context_info,
         });
     }
 
     fn show_kill_multiple_dialog(&mut self) {
         let count = self.selected_items.len();
+        let process_names: Vec<String> = self.selected_items
+            .iter()
+            .filter_map(|&index| match self.mode {
+                AppMode::ProcessView => self.filtered_processes.get(index).map(|p| p.name.clone()),
+                _ => None,
+            })
+            .take(5) // Show max 5 names
+            .collect();
+            
+        let process_list = if process_names.len() < count {
+            format!("{} and {} more", process_names.join(", "), count - process_names.len())
+        } else {
+            process_names.join(", ")
+        };
+        
+        let danger_level = if count > 10 {
+            DangerLevel::Critical
+        } else if count > 5 {
+            DangerLevel::High
+        } else {
+            DangerLevel::Medium
+        };
+        
         self.confirmation_dialog = Some(ConfirmationDialog {
-            title: "Kill Multiple".to_string(),
-            message: format!("Kill {count} selected items?\nPress 'y' to confirm, 'n' to cancel"),
+            title: "Terminate Multiple Processes".to_string(),
+            message: format!(
+                "Are you sure you want to terminate {} processes?\n\nProcesses: {}\n\nThis is a bulk operation and cannot be undone.",
+                count, process_list
+            ),
             confirm_action: DialogAction::Processes(
                 self.selected_items
                     .iter()
@@ -630,6 +811,8 @@ impl AppState {
                     })
                     .collect(),
             ),
+            danger_level,
+            context_info: Some(format!("Total processes: {}", count)),
         });
     }
 
@@ -637,25 +820,39 @@ impl AppState {
         if let Some(dialog) = self.confirmation_dialog.take() {
             match dialog.confirm_action {
                 DialogAction::Process(pid) => {
+                    self.loading_state = LoadingState::KillingProcess(pid);
+                    self.app_status = AppStatus::Processing(format!("Terminating process {}...", pid));
+                    
                     match crate::process::ProcessKiller::kill_process_by_pid(pid, false).await {
                         Ok(()) => {
+                            self.loading_state = LoadingState::Idle;
+                            self.app_status = AppStatus::Success(format!("Successfully killed process {}", pid));
                             self.set_status_message(format!("Successfully killed process {pid}"));
                             self.refresh_data()?;
                         }
                         Err(e) => {
+                            self.loading_state = LoadingState::Idle;
+                            self.app_status = AppStatus::Error(format!("Failed to kill process {}: {}", pid, e));
                             self.set_status_message(format!("Failed to kill process {pid}: {e}"));
                         }
                     }
                 }
                 DialogAction::Port(port) => {
+                    self.loading_state = LoadingState::KillingPort(port);
+                    self.app_status = AppStatus::Processing(format!("Killing process on port {}...", port));
+                    
                     match crate::process::ProcessKiller::kill_process_by_port(port).await {
                         Ok(pid) => {
+                            self.loading_state = LoadingState::Idle;
+                            self.app_status = AppStatus::Success(format!("Successfully killed process {} using port {}", pid, port));
                             self.set_status_message(format!(
                                 "Successfully killed process {pid} using port {port}"
                             ));
                             self.refresh_data()?;
                         }
                         Err(e) => {
+                            self.loading_state = LoadingState::Idle;
+                            self.app_status = AppStatus::Error(format!("Failed to kill port {}: {}", port, e));
                             self.set_status_message(format!("Failed to kill port {port}: {e}"));
                         }
                     }
@@ -683,12 +880,82 @@ impl AppState {
     pub fn set_status_message(&mut self, message: String) {
         self.status_message = Some((message, Instant::now()));
     }
+    
+    pub fn set_loading_state(&mut self, state: LoadingState) {
+        self.loading_state = state;
+    }
+    
+    pub fn set_app_status(&mut self, status: AppStatus) {
+        self.app_status = status;
+    }
+    
+    pub fn set_operation_progress(&mut self, progress: Option<f32>) {
+        self.operation_progress = progress;
+    }
+    
+    pub fn is_loading(&self) -> bool {
+        !matches!(self.loading_state, LoadingState::Idle)
+    }
+    
+    pub fn get_loading_message(&self) -> Option<String> {
+        match &self.loading_state {
+            LoadingState::Idle => None,
+            LoadingState::RefreshingData => Some("Refreshing system data...".to_string()),
+            LoadingState::KillingProcess(pid) => Some(format!("Terminating process {}...", pid)),
+            LoadingState::KillingPort(port) => Some(format!("Killing process on port {}...", port)),
+            LoadingState::SearchingData => Some("Searching...".to_string()),
+        }
+    }
 
     pub fn switch_to_mode(&mut self, mode: AppMode) {
+        // Clear search when switching modes unless going to search-related mode
+        if !matches!(mode, AppMode::ThemeSelector) && self.search_active {
+            self.search_active = false;
+            self.search_query.clear();
+            self.reset_filters();
+        }
+        
+        // Get mode name before moving the value
+        let mode_name = match mode {
+            AppMode::Dashboard => "Dashboard",
+            AppMode::ProcessView => "Process View",
+            AppMode::PortView => "Port View", 
+            AppMode::ConnectionView => "Connection View",
+            AppMode::ThemeSelector => "Theme Selector",
+        };
+        
         self.mode = mode;
         self.selected_index = 0;
         self.selected_items.clear();
         self.multi_select_mode = false;
+        self.show_help = false; // Auto-close help when switching modes
+        
+        // Set appropriate status message
+        self.set_status_message(format!("Switched to {}", mode_name));
+    }
+    
+    fn clear_selection(&mut self) {
+        self.selected_items.clear();
+        self.multi_select_mode = false;
+        self.set_status_message("Selection cleared".to_string());
+    }
+    
+    fn handle_escape(&mut self) {
+        if self.search_active {
+            // Exit search mode
+            self.search_active = false;
+            self.search_query.clear();
+            self.reset_filters();
+        } else if self.multi_select_mode {
+            // Clear multi-selection
+            self.clear_selection();
+        } else if self.show_help {
+            // Close help
+            self.show_help = false;
+        } else {
+            // Default to quit
+            self.should_quit = true;
+        }
     }
 
     pub fn get_status_message(&self) -> Option<&str> {
@@ -734,7 +1001,11 @@ mod tests {
             sort_order: SortOrder::Descending,
             show_help: false,
             status_message: None,
+            app_status: AppStatus::Ready,
+            loading_state: LoadingState::Idle,
             confirmation_dialog: None,
+            operation_progress: None,
+            critical_confirmation_buffer: String::new(),
 
             processes: vec![],
             filtered_processes: vec![],
